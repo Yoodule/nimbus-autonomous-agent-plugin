@@ -1,23 +1,31 @@
 {
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "nimbus-autonomous-agent-plugin",
+  "metadata": {
+    "version": "1.0.0",
+    "description": "Autonomous agent task queue with multi-step automation"
+  },
   "owner": {
     "name": "Yoodule",
-    "url": "https://github.com/Yoodule"
+    "email": "claude@anthropic.com"
   },
   "plugins": [
     {
       "name": "nimbus",
-      "version": "1.0.0",
-      "description": "Autonomous agent task queue with multi-step automation and dependency resolution",
-      "author": {
-        "name": "Claude Code",
-        "email": "claude@anthropic.com"
+      "source": {
+        "source": "github",
+        "repo": "Yoodule/nimbus-autonomous-agent-plugin",
+        "ref": "main"
       },
-      "source": "https://github.com/Yoodule/nimbus-autonomous-agent-plugin",
-      "repository": "https://github.com/Yoodule/nimbus-autonomous-agent-plugin",
+      "description": "Autonomous agent task queue with multi-step automation and dependency resolution",
+      "version": "1.0.0",
+      "author": {
+        "name": "Claude Code"
+      },
       "homepage": "https://github.com/Yoodule/nimbus-autonomous-agent-plugin",
       "license": "MIT",
-      "keywords": ["autonomy", "job-queue", "task-management", "dependencies", "worker-pattern", "agent", "automation"]
+      "category": "development",
+      "keywords": ["autonomy", "job-queue", "task-management", "dependencies", "agent", "automation"]
     }
   ]
 }
