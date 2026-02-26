@@ -1,0 +1,19 @@
+{
+  "name": "nimbus",
+  "version": "1.0.0",
+  "description": "Autonomous agent task queue with multi-step automation and dependency resolution",
+  "author": {
+    "name": "Claude Code",
+    "email": "claude@anthropic.com"
+  },
+  "repository": "https://github.com/Yoodule/nimbus-autonomous-agent-plugin",
+  "homepage": "https://github.com/Yoodule/nimbus-autonomous-agent-plugin",
+  "license": "MIT",
+  "keywords": ["autonomy", "job-queue", "task-management", "dependencies", "worker-pattern", "agent", "automation"],
+  "skills": [
+    "nimbus",
+    "nimbus-status",
+    "nimbus-stop",
+    "nimbus-query"
+  ]
+}
