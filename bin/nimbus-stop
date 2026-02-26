@@ -1,0 +1,66 @@
+#!/bin/bash
+
+# Nimbus Stop - Cancel or remove a task from the queue
+
+set -euo pipefail
+
+# Source queue utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/queue-utils.sh"
+
+# Parse arguments
+TASK_ID="${1:-}"
+
+if [[ -z "$TASK_ID" ]]; then
+  cat <<'EOF'
+❌ Error: No task ID provided
+
+USAGE:
+  /nimbus-stop <task-id>
+
+EXAMPLES:
+  /nimbus-stop 1
+  /nimbus-stop my-task
+
+View all tasks:
+  /nimbus-status
+EOF
+  exit 1
+fi
+
+# Initialize queue
+queue_init
+
+QUEUE_FILE=".claude/plugins/nimbus/queue.json"
+
+# Check if task exists
+TASK=$(jq ".tasks[] | select(.id == \"$TASK_ID\")" "$QUEUE_FILE" 2>/dev/null || echo "")
+
+if [[ -z "$TASK" ]]; then
+  echo "❌ Error: Task '$TASK_ID' not found in queue"
+  echo ""
+  echo "Active tasks:"
+  jq -r '.tasks[] | "  • \(.id): \(.name) (\(.status))"' "$QUEUE_FILE"
+  exit 1
+fi
+
+# Get task name
+TASK_NAME=$(echo "$TASK" | jq -r '.name')
+TASK_STATUS=$(echo "$TASK" | jq -r '.status')
+
+# Update task status to cancelled
+queue_update_task "$TASK_ID" "status" "cancelled"
+
+# Remove task from queue (instead of marking cancelled)
+# This removes it completely from the work queue
+jq ".tasks |= map(select(.id != \"$TASK_ID\"))" "$QUEUE_FILE" > "$QUEUE_FILE.tmp"
+mv "$QUEUE_FILE.tmp" "$QUEUE_FILE"
+
+echo "🛑 Task removed from queue"
+echo ""
+echo "Task ID:   $TASK_ID"
+echo "Name:      $TASK_NAME"
+echo "Status:    $TASK_STATUS → removed"
+echo ""
+echo "Queue updated. View status:"
+echo "  /nimbus-status"

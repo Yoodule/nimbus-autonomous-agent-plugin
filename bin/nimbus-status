@@ -1,0 +1,90 @@
+#!/bin/bash
+
+# Nimbus Status - View task queue and progress
+
+set -euo pipefail
+
+# Source queue utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/queue-utils.sh"
+
+# Initialize queue
+queue_init
+
+QUEUE_FILE=".claude/plugins/nimbus/queue.json"
+
+# Check if queue is empty
+TASK_COUNT=$(jq '.tasks | length' "$QUEUE_FILE")
+
+if [[ $TASK_COUNT -eq 0 ]]; then
+  echo "📭 Nimbus queue is empty"
+  echo ""
+  echo "Add a task with:"
+  echo "  /nimbus 'Your task' --completion-promise 'Your phrase'"
+  exit 0
+fi
+
+# Display header
+echo "📋 Nimbus Queue Status"
+echo "═══════════════════════════════════════════════════════════════════════════════"
+echo ""
+
+# Get all tasks and display with formatting
+jq -r '.tasks[] |
+  "ID: \(.id)\n" +
+  "  Name:               \(.name)\n" +
+  "  Status:             \(.status)\n" +
+  "  Iteration:          \(.iteration)/\(.max_iterations)\n" +
+  "  Completion promise: \(.completion_promise // "none")\n" +
+  "  Dependencies:       \(if (.depends_on | length) > 0 then (.depends_on | join(", ")) else "none" end)\n" +
+  "  Created:            \(.created_at)\n" +
+  (if .started_at then "  Started:            \(.started_at)\n" else "" end) +
+  (if .completed_at then "  Completed:          \(.completed_at)\n" else "" end) +
+  "\n"' "$QUEUE_FILE"
+
+# Display queue summary
+echo "═══════════════════════════════════════════════════════════════════════════════"
+echo ""
+
+ACTIVE=$(jq '[.tasks[] | select(.status == "active")] | length' "$QUEUE_FILE")
+QUEUED=$(jq '[.tasks[] | select(.status == "queued")] | length' "$QUEUE_FILE")
+COMPLETED=$(jq '[.tasks[] | select(.status == "completed")] | length' "$QUEUE_FILE")
+FAILED=$(jq '[.tasks[] | select(.status == "failed")] | length' "$QUEUE_FILE")
+
+echo "Summary:"
+echo "  Active:    $ACTIVE"
+echo "  Queued:    $QUEUED"
+echo "  Completed: $COMPLETED"
+echo "  Failed:    $FAILED"
+echo "  Total:     $TASK_COUNT"
+echo ""
+
+# Show next eligible task
+NEXT=$(jq -r '.tasks[] | select(.status == "queued") | .id' "$QUEUE_FILE" | head -1)
+if [[ -n "$NEXT" ]]; then
+  # Check if it has unmet dependencies
+  NEXT_DATA=$(jq ".tasks[] | select(.id == \"$NEXT\")" "$QUEUE_FILE")
+  NEXT_DEPS=$(echo "$NEXT_DATA" | jq -r '.depends_on[]? // empty')
+
+  HAS_UNMET=false
+  for dep_id in $NEXT_DEPS; do
+    DEP_STATUS=$(jq -r ".tasks[] | select(.id == \"$dep_id\") | .status" "$QUEUE_FILE")
+    if [[ "$DEP_STATUS" != "completed" ]]; then
+      HAS_UNMET=true
+      break
+    fi
+  done
+
+  if [[ "$HAS_UNMET" == "true" ]]; then
+    echo "Next task (waiting for dependencies): $NEXT"
+  else
+    echo "Next eligible task: $NEXT"
+  fi
+fi
+
+# Show commands
+echo ""
+echo "Commands:"
+echo "  /nimbus 'task' --completion-promise 'phrase'    Add new task"
+echo "  /nimbus-stop <task-id>                          Stop task"
+echo "  /nimbus-status                                  Show this status"

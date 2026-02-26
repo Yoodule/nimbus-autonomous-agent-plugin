@@ -1,0 +1,83 @@
+#!/bin/bash
+
+# Nimbus Verification - Check if system is properly set up
+
+set -euo pipefail
+
+echo "🔍 Nimbus System Verification"
+echo "═══════════════════════════════════════════════════════════════════════════════"
+echo ""
+
+CHECKS_PASSED=0
+CHECKS_TOTAL=0
+
+check() {
+  local name="$1"
+  local cmd="$2"
+
+  CHECKS_TOTAL=$((CHECKS_TOTAL + 1))
+
+  if eval "$cmd" > /dev/null 2>&1; then
+    echo "✅ $name"
+    CHECKS_PASSED=$((CHECKS_PASSED + 1))
+  else
+    echo "❌ $name"
+  fi
+}
+
+# Check files exist
+check "Queue utils library" "[[ -f .claude/plugins/nimbus/lib/queue-utils.sh ]]"
+check "Hook script" "[[ -f .claude/plugins/nimbus/hooks/on_nimbus.sh ]]"
+check "Nimbus start script" "[[ -f .claude/plugins/nimbus/bin/nimbus-start ]]"
+check "Nimbus status script" "[[ -f .claude/plugins/nimbus/bin/nimbus-status ]]"
+check "Nimbus stop script" "[[ -f .claude/plugins/nimbus/bin/nimbus-stop ]]"
+check "Nimbus query script" "[[ -f .claude/plugins/nimbus/bin/nimbus-query ]]"
+
+# Check files are executable
+check "Scripts are executable" "[[ -x .claude/plugins/nimbus/bin/nimbus-start ]]"
+
+# Check documentation
+check "Quick start docs" "[[ -f .claude/plugins/nimbus/docs/QUICK_START.md ]]"
+check "Full documentation" "[[ -f .claude/plugins/nimbus/docs/QUEUE.md ]]"
+check "Upgrade guide" "[[ -f .claude/plugins/nimbus/docs/UPGRADE.md ]]"
+
+# Check settings.json has hook
+check "Hook configured in settings" "grep -q 'plugins/nimbus/hooks/on_nimbus.sh' .claude/settings.json"
+
+# Test basic queue operations
+source .claude/plugins/nimbus/lib/queue-utils.sh
+queue_init
+check "Queue initialization" "[[ -f .claude/plugins/nimbus/queue.json ]]"
+
+# Test jq is available
+check "jq available" "which jq > /dev/null"
+
+# Test bash version (3.2+ works fine)
+check "Bash version (3.2+)" "[[ ${BASH_VERSINFO[0]} -ge 3 ]]"
+
+echo ""
+echo "═══════════════════════════════════════════════════════════════════════════════"
+
+if [[ $CHECKS_PASSED -eq $CHECKS_TOTAL ]]; then
+  echo ""
+  echo "🎉 All checks passed! Nimbus is ready to use."
+  echo ""
+  echo "Quick start:"
+  echo "  /nimbus 'Your task' --completion-promise 'When done'"
+  echo ""
+  echo "For help:"
+  echo "  /nimbus --help"
+  echo "  /nimbus-status"
+  echo "  /nimbus-query"
+  exit 0
+else
+  echo ""
+  echo "⚠️  $((CHECKS_TOTAL - CHECKS_PASSED)) checks failed"
+  echo ""
+  echo "Please check:"
+  echo "  1. Files are in correct location: .claude/scripts/*.sh"
+  echo "  2. Scripts are executable: chmod +x .claude/scripts/*"
+  echo "  3. jq is installed: which jq"
+  echo ""
+  exit 1
+fi

@@ -1,0 +1,288 @@
+#!/bin/bash
+
+# Nimbus Query - Get task status and dependency information
+# Allows agents to check if dependencies are met, task status, etc.
+
+set -euo pipefail
+
+# Source queue utilities
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$(dirname "${BASH_SOURCE[0]}")/../lib/queue-utils.sh"
+
+QUEUE_FILE=".claude/plugins/nimbus/queue.json"
+
+# Initialize queue
+queue_init
+
+# Parse arguments
+COMMAND="${1:-}"
+TASK_ID="${2:-}"
+
+case "$COMMAND" in
+  # Get status of a specific task (with helpful info)
+  status)
+    if [[ -z "$TASK_ID" ]]; then
+      echo "❌ Error: task ID required"
+      echo "Usage: /nimbus-query status <task-id> [--json]"
+      exit 1
+    fi
+
+    JSON_MODE="${3:-}"
+
+    TASK=$(jq ".tasks[] | select(.id == \"$TASK_ID\")" "$QUEUE_FILE" 2>/dev/null || echo "")
+
+    if [[ -z "$TASK" ]]; then
+      if [[ "$JSON_MODE" == "--json" ]]; then
+        jq -n '{status: "NOT_FOUND"}'
+      else
+        echo "NOT_FOUND"
+      fi
+      exit 1
+    fi
+
+    if [[ "$JSON_MODE" == "--json" ]]; then
+      # Return structured JSON for agents
+      echo "$TASK" | jq '{
+        id,
+        name,
+        status,
+        iteration,
+        max_iterations,
+        progress: "\(.iteration)/\(.max_iterations)",
+        dependencies: .depends_on,
+        has_dependencies: (.depends_on | length) > 0,
+        completion_promise,
+        created_at,
+        started_at,
+        completed_at
+      }'
+    else
+      # Return human-readable status
+      STATUS=$(echo "$TASK" | jq -r '.status')
+      NAME=$(echo "$TASK" | jq -r '.name')
+      ITER=$(echo "$TASK" | jq -r '.iteration')
+      MAX=$(echo "$TASK" | jq -r '.max_iterations')
+      DEPS=$(echo "$TASK" | jq -r '.depends_on | join(", ")')
+
+      if [[ -z "$DEPS" ]]; then
+        echo "$STATUS - $NAME [$ITER/$MAX iterations]"
+      else
+        if [[ "$STATUS" == "queued" ]]; then
+          echo "$STATUS (waiting for: $DEPS) - $NAME"
+        else
+          echo "$STATUS - $NAME [$ITER/$MAX iterations] (depends on: $DEPS)"
+        fi
+      fi
+    fi
+    ;;
+
+  # Check if all dependencies are met (returns 0 if yes, 1 if no)
+  deps-met)
+    if [[ -z "$TASK_ID" ]]; then
+      echo "❌ Error: task ID required"
+      echo "Usage: /nimbus-query deps-met <task-id>"
+      exit 1
+    fi
+
+    TASK=$(jq ".tasks[] | select(.id == \"$TASK_ID\")" "$QUEUE_FILE" 2>/dev/null || echo "")
+
+    if [[ -z "$TASK" ]]; then
+      echo "NOT_FOUND"
+      exit 1
+    fi
+
+    # Get dependencies
+    DEPENDS=$(echo "$TASK" | jq -r '.depends_on[]? // empty')
+
+    if [[ -z "$DEPENDS" ]]; then
+      # No dependencies
+      echo "YES"
+      exit 0
+    fi
+
+    # Check each dependency
+    ALL_MET=true
+    for dep_id in $DEPENDS; do
+      DEP_STATUS=$(jq -r ".tasks[] | select(.id == \"$dep_id\") | .status" "$QUEUE_FILE" 2>/dev/null || echo "NOT_FOUND")
+      if [[ "$DEP_STATUS" != "completed" ]]; then
+        ALL_MET=false
+        break
+      fi
+    done
+
+    if [[ "$ALL_MET" == "true" ]]; then
+      echo "YES"
+      exit 0
+    else
+      echo "NO"
+      exit 1
+    fi
+    ;;
+
+  # Get task information as JSON
+  info)
+    if [[ -z "$TASK_ID" ]]; then
+      echo "❌ Error: task ID required"
+      echo "Usage: /nimbus-query info <task-id>"
+      exit 1
+    fi
+
+    jq ".tasks[] | select(.id == \"$TASK_ID\")" "$QUEUE_FILE" 2>/dev/null || echo "{}"
+    ;;
+
+  # List all tasks with specific status
+  list)
+    STATUS_FILTER="${2:-all}"
+
+    if [[ "$STATUS_FILTER" == "all" ]]; then
+      jq -r '.tasks[] | "\(.id)|\(.name)|\(.status)"' "$QUEUE_FILE"
+    else
+      jq -r ".tasks[] | select(.status == \"$STATUS_FILTER\") | \"\(.id)|\(.name)|\(.status)\"" "$QUEUE_FILE"
+    fi
+    ;;
+
+  # Get unmet dependencies for a task
+  unmet-deps)
+    if [[ -z "$TASK_ID" ]]; then
+      echo "❌ Error: task ID required"
+      echo "Usage: /nimbus-query unmet-deps <task-id>"
+      exit 1
+    fi
+
+    TASK=$(jq ".tasks[] | select(.id == \"$TASK_ID\")" "$QUEUE_FILE" 2>/dev/null || echo "")
+
+    if [[ -z "$TASK" ]]; then
+      echo "NOT_FOUND"
+      exit 1
+    fi
+
+    # Get dependencies
+    DEPENDS=$(echo "$TASK" | jq -r '.depends_on[]? // empty')
+
+    if [[ -z "$DEPENDS" ]]; then
+      # No dependencies
+      echo ""
+      exit 0
+    fi
+
+    # Find unmet dependencies
+    UNMET=""
+    for dep_id in $DEPENDS; do
+      DEP_STATUS=$(jq -r ".tasks[] | select(.id == \"$dep_id\") | .status" "$QUEUE_FILE" 2>/dev/null || echo "NOT_FOUND")
+      if [[ "$DEP_STATUS" != "completed" ]]; then
+        if [[ -n "$UNMET" ]]; then
+          UNMET="$UNMET,$dep_id"
+        else
+          UNMET="$dep_id"
+        fi
+      fi
+    done
+
+    echo "$UNMET"
+    ;;
+
+  # Get task prompt
+  prompt)
+    if [[ -z "$TASK_ID" ]]; then
+      echo "❌ Error: task ID required"
+      echo "Usage: /nimbus-query prompt <task-id>"
+      exit 1
+    fi
+
+    jq -r ".tasks[] | select(.id == \"$TASK_ID\") | .prompt" "$QUEUE_FILE" 2>/dev/null || echo ""
+    ;;
+
+  # Get all info (pretty printed)
+  all)
+    if [[ -z "$TASK_ID" ]]; then
+      echo "❌ Error: task ID required"
+      echo "Usage: /nimbus-query all <task-id>"
+      exit 1
+    fi
+
+    TASK=$(jq ".tasks[] | select(.id == \"$TASK_ID\")" "$QUEUE_FILE" 2>/dev/null || echo "")
+
+    if [[ -z "$TASK" ]]; then
+      echo "Task not found: $TASK_ID"
+      exit 1
+    fi
+
+    echo "=== Task: $TASK_ID ==="
+    echo "$TASK" | jq '
+      {
+        id,
+        name,
+        status,
+        iteration: "\(.iteration)/\(.max_iterations)",
+        dependencies: .depends_on,
+        completion_promise,
+        created_at,
+        started_at,
+        completed_at,
+        prompt: .prompt[0:100] + (if (.prompt | length) > 100 then "..." else "" end)
+      }
+    ' | sed 's/^/  /'
+    ;;
+
+  *)
+    cat <<'EOF'
+Nimbus Query - Check task status and dependencies
+
+USAGE:
+  /nimbus-query <COMMAND> [task-id] [OPTIONS]
+
+COMMANDS:
+  status <id> [--json]      Get task status with info (human or JSON format)
+  deps-met <id>             Check if all dependencies completed (YES/NO)
+  unmet-deps <id>           List unmet dependency IDs (comma-separated)
+  info <id>                 Get full task data as JSON
+  prompt <id>               Get task prompt text
+  all <id>                  Get full task details (pretty-printed)
+  list [status]             List all tasks or filter by status
+
+EXAMPLES - For Humans:
+  # Get readable status
+  /nimbus-query status 1
+  Output: active - Run tests [5/50 iterations]
+
+  # Check if task can start
+  /nimbus-query deps-met 2
+  Output: NO (dependencies not met)
+
+  # Find what task is waiting for
+  /nimbus-query unmet-deps 2
+  Output: 1
+
+EXAMPLES - For Agents (JSON):
+  # Get structured status data
+  /nimbus-query status 1 --json
+  Output: {
+    "id": "1",
+    "status": "active",
+    "progress": "5/50",
+    "dependencies": [],
+    ...
+  }
+
+  # Check if dependencies met programmatically
+  if /nimbus-query deps-met 2; then
+    echo "Can start task 2"
+  fi
+
+AGENT WORKFLOW:
+  1. Check if previous task completed:
+     /nimbus-query status 1 --json | jq '.status'
+
+  2. Check if dependencies are met:
+     /nimbus-query deps-met 2
+
+  3. If waiting, find unmet deps:
+     /nimbus-query unmet-deps 2
+
+EXIT CODES:
+  0 = success (or YES for yes/no commands)
+  1 = failure (or NO for yes/no commands)
+EOF
+    exit 1
+    ;;
+esac
